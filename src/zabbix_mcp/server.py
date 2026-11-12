@@ -74,6 +74,9 @@ from zabbix_utils.exceptions import APIRequestError
 from zabbix_mcp.client import ClientManager, RateLimitError, ReadOnlyError, UnknownOutcomeError
 from zabbix_mcp.config import AppConfig
 from zabbix_mcp.config import FORWARDED_BY as _FORWARDED_BY, UNVOUCHED as _UNVOUCHED
+from zabbix_mcp.delegation import (  # fork: delegated Zabbix authentication
+    DelegatedAuthError, credential_from_meta, reset_delegated_auth, set_delegated_auth,
+)
 from zabbix_mcp.timezones import EPOCH_FIELDS, add_local_times, now_local, resolve_zone, zone_name
 
 logger = logging.getLogger("zabbix_mcp.server")
@@ -2480,6 +2483,8 @@ class ZabbixMCPServer(MCPServer):
     (``[server].reject_unknown_arguments``)."""
 
     reject_unknown_arguments: bool = True
+    # Fork: [server].delegated_auth (zabbix_mcp/delegation.py)
+    delegated_auth: str = "off"
 
     async def call_tool(self, name: str, arguments: dict[str, Any], context: Any = None) -> Any:
         if self.reject_unknown_arguments:
@@ -2489,7 +2494,18 @@ class ZabbixMCPServer(MCPServer):
                 if message:
                     # a tool-level error (isError), which the model can read and correct
                     raise ToolError(message)
-        return await super().call_tool(name, arguments, context)
+        # Fork: the end user's Zabbix credential travels in the request _meta and is
+        # used for every Zabbix call this tool makes (ClientManager.call).
+        request_context = getattr(context, "request_context", None) if context is not None else None
+        try:
+            credential = credential_from_meta(getattr(request_context, "meta", None), self.delegated_auth)
+        except DelegatedAuthError as exc:
+            raise ToolError(str(exc)) from None
+        token = set_delegated_auth(credential)
+        try:
+            return await super().call_tool(name, arguments, context)
+        finally:
+            reset_delegated_auth(token)
 
 
 def _add_text_tool(mcp: MCPServer, fn: Any, **kwargs: Any) -> None:
@@ -4735,6 +4751,9 @@ def run_server(
         transport=transport,
     )
     mcp.reject_unknown_arguments = config.server.reject_unknown_arguments
+    mcp.delegated_auth = config.server.delegated_auth
+    if config.server.delegated_auth != "off":
+        logger.info("Delegated Zabbix authentication: %s", config.server.delegated_auth)
     # What a client reads at initialize: the rules no single tool description
     # carries, for the tools registered just now.
     mcp._lowlevel_server.instructions = _server_instructions(

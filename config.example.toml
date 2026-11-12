@@ -139,6 +139,21 @@ compact_output = true
 # call.
 # reject_unknown_arguments = true
 
+# [FORK] Delegated Zabbix authentication (src/zabbix_mcp/delegation.py).
+# A client acting for a Zabbix user (the chat gateway of the frontend module)
+# sends that user's credential - frontend session id or personal API token -
+# in the _meta of each tools/call, key "zabbix-mcp/delegated-auth". Every
+# Zabbix call of that tool then uses it instead of api_token below, so Zabbix
+# applies the user's host permissions, role and API restrictions.
+#   "off"      (default) a call carrying a credential is refused, not ignored
+#   "allowed"  with a credential: the user's rights; without: api_token
+#   "required" a call without a credential is refused (recommended for a
+#              server used only by the chat gateway)
+# A refused or expired user session is returned as an error; it is never
+# retried with api_token. api_token is still needed: version detection,
+# time zone and health_check use it.
+# delegated_auth = "off"
+
 # Refuse to start when the server listens on an address other than loopback
 # and no client authentication is configured (no [tokens.*], no auth_token, no
 # [oauth]). Off by default: an unauthenticated server only gets a warning.

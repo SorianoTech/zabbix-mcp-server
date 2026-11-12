@@ -315,6 +315,9 @@ class ServerConfig:
     # (the MCP SDK drops it and runs the rest: a misspelt filter returned
     # every row). False restores that, for a client that adds keys of its own.
     reject_unknown_arguments: bool = True
+    # Fork: accept the end user's Zabbix credential in the _meta of a tools/call
+    # ("off" | "allowed" | "required", see zabbix_mcp/delegation.py).
+    delegated_auth: str = "off"
     # refuse to start over HTTP on an address other than loopback when no client
     # authentication is configured (no token, no auth_token, no OAuth)
     require_auth: bool = False
@@ -886,6 +889,11 @@ def load_config(path: str | Path) -> AppConfig:
     if not isinstance(reject_unknown_raw, bool):
         raise ConfigError("'reject_unknown_arguments' must be a boolean (true or false)")
 
+    from zabbix_mcp.delegation import DELEGATED_AUTH_MODES
+    delegated_auth_raw = server_raw.get("delegated_auth", "off")
+    if delegated_auth_raw not in DELEGATED_AUTH_MODES:
+        raise ConfigError(f"'delegated_auth' must be one of: {', '.join(DELEGATED_AUTH_MODES)}")
+
     require_auth_raw = server_raw.get("require_auth", False)
     if not isinstance(require_auth_raw, bool):
         raise ConfigError("'require_auth' must be a boolean (true or false)")
@@ -931,6 +939,7 @@ def load_config(path: str | Path) -> AppConfig:
         validate_get_params=validate_get_raw,
         schema_constraints=schema_constraints_raw,
         reject_unknown_arguments=reject_unknown_raw,
+        delegated_auth=delegated_auth_raw,
         require_auth=require_auth_raw,
         strip_write_params=strip_write_raw,
         response_max_chars=response_max_chars_raw,

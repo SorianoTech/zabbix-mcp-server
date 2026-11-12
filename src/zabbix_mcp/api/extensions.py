@@ -135,6 +135,17 @@ def graph_render(
         if not 50 <= height <= 2048:
             return _error_json(f"height must be between 50 and 2048, got {height}.")
 
+        # Fork: on behalf of a Zabbix user, the image below is still fetched with the
+        # service credential, so first ask Zabbix - with the user's credential -
+        # whether this user can see the graph at all.
+        from zabbix_mcp.delegation import current_delegated_auth
+        if current_delegated_auth() is not None:
+            visible = client_manager.call(
+                server_name, "graph.get", {"graphids": [graphid], "output": ["graphid"]},
+            )
+            if not visible:
+                return _error_json(f"Graph {graphid} does not exist or you have no permission to see it.")
+
         # --- Resolve Zabbix frontend URL ---
         srv_config = client_manager.get_server_config(server_name)
         base_url = srv_config.url.rstrip("/")

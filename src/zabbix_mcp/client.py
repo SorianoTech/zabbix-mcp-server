@@ -569,6 +569,12 @@ class ClientManager:
         """
         import ssl
         self._rate_limiter.check(_calling_client())
+        # Fork: a tool call made on behalf of a Zabbix user (zabbix_mcp/delegation.py)
+        # goes out with that user's credential and never with the service one.
+        from zabbix_mcp.delegation import current_delegated_auth
+        delegated = current_delegated_auth()
+        if delegated is not None:
+            return self._call_delegated(server, method, params, delegated)
         client = self._get_client(server)
         try:
             return self._do_call(client, method, params)
@@ -591,6 +597,28 @@ class ClientManager:
                 ) from e
             client = self._reconnect(server)
             return self._do_call(client, method, params)
+
+    def _call_delegated(self, server: str, method: str, params: Any, credential: str) -> Any:
+        """Fork: one API call with the end user's credential (session id or API token).
+
+        No reconnect and no fallback to the service credential: a refused or
+        expired session is the user's answer. A read whose answer was lost is
+        asked once more; a write is not (same rule as ``call``)."""
+        if not self._METHOD_RE.match(method):
+            raise ValueError(
+                f"Invalid API method format: '{method}'. "
+                f"Expected 'object.method' (e.g. 'host.get')."
+            )
+        try:
+            return self.call_with_session(server, method, params, credential)
+        except (ConnectionError, TimeoutError, OSError) as e:
+            if not resend_is_safe(method):
+                raise UnknownOutcomeError(
+                    f"The connection to Zabbix broke while {method} was waiting for its answer "
+                    f"({type(e).__name__}: {e}). Zabbix may or may not have applied it, so the call "
+                    f"was not sent again. Read the object back with a get call before repeating it."
+                ) from e
+            return self.call_with_session(server, method, params, credential)
 
     # Strict format: "object.method" — only ASCII letters, single dot separator.
     _METHOD_RE = re.compile(r"^[a-zA-Z]+\.[a-zA-Z]+$")
